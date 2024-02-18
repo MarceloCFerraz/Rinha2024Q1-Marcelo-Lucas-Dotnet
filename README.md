@@ -96,7 +96,7 @@ Antes do teste iniciar, um script verificará se a API está respondendo correta
     "descricao" : "descricao"
 }
 ```
-- `valor (int)`: **REQUIRED**. valor em centavos a decrementar do saldo do cliente. EX: R$ 10,00 = 1000 centavos.
+- `valor (int)`: **REQUIRED**. valor em centavos a decrementar do saldo do cliente. EX: R$ 10,00 = 1000 centavos. o valor deve ser sempre positivo e deve ser armazenado no banco como positivo e convertido para negativo sob demanda.
 - `tipo (char)`: **REQUIRED**.
 	- `c`: crédito incrementa valor do saldo (considerar como `income` ao invés de crédito de cartão) 
 	- `d`: débito decrementa valor do saldo (ver regras)
