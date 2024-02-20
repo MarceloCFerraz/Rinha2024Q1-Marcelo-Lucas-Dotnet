@@ -1,13 +1,25 @@
+SET timezone TO 'UTC';
+
 SET statement_timeout = 0;
+
 SET lock_timeout = 0;
+
 SET idle_in_transaction_session_timeout = 0;
+
 SET client_encoding = 'UTF8';
+
 SET standard_conforming_strings = ON;
+
 SET check_function_bodies = FALSE;
+
 SET xmloption = content;
+
 SET client_min_messages = warning;
+
 SET row_security = OFF;
+
 SET default_tablespace = '';
+
 SET default_table_access_method = heap;
 
 DROP TABLE IF EXISTS cliente;
@@ -25,13 +37,13 @@ CREATE TABLE transacao(
     valor integer NOT NULL,
     descricao varchar(10) NOT NULL,
     tipo char NOT NULL,
-    hora_criacao timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    realizada_em timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     id_cliente integer NOT NULL
 );
 
-CREATE INDEX idx_customer_id ON cliente(id);
+CREATE INDEX idx_cliente_id ON cliente(id);
 
-CREATE INDEX idx_transaction_customer_id ON transacao(id_cliente);
+CREATE INDEX idx_transacao_cliente_id ON transacao(id_cliente);
 
 INSERT INTO cliente(id, limite, saldo)
     VALUES (1, 100000, 0),
@@ -45,7 +57,6 @@ INSERT INTO cliente(id, limite, saldo)
 --     limite_cliente int4,
 --     success bool
 -- );
-
 -- CREATE OR REPLACE FUNCTION criar_transacao_debito(valor integer, id_cliente int4, descricao varchar(10))
 --     RETURNS saldo_limite
 --     LANGUAGE plpgsql
@@ -74,7 +85,6 @@ INSERT INTO cliente(id, limite, saldo)
 --     RETURN result;
 -- END;
 -- $$;
-
 -- CREATE OR REPLACE FUNCTION criar_transacao_credito(valor integer, id_cliente int4, descricao varchar(10))
 --     RETURNS saldo_limite
 --     LANGUAGE plpgsql
@@ -98,4 +108,3 @@ INSERT INTO cliente(id, limite, saldo)
 --     RETURN result;
 -- END;
 -- $$;
-
