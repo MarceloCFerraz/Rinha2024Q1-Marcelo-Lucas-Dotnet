@@ -1,3 +1,6 @@
 obj
 bin
 OfficialRepo
+load-test
+NginxConf
+DbSchema
