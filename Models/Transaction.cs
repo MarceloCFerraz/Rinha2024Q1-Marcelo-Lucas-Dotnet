@@ -1,7 +1,7 @@
 public class Transaction
 {
     public int id { get; set; }
-    public int valor { get; set; }
+    public decimal valor { get; set; }
     public string descricao { get; set; } = "";
     public char tipo { get; set; } // Using 'string' here, if 'c' or 'd'
     public DateTime? realizada_em { get; set; }
@@ -9,7 +9,12 @@ public class Transaction
 
     public override string ToString()
     {
-        return $"Transaction ID: {this.id}\nValue: {this.valor}\nDescription: {this.descricao}\nType: {this.tipo}\nTimestamp: {this.realizada_em}\nClient ID: {this.id_cliente}";
+        return $@"Transaction ID: {this.id}\n
+            Value: {this.valor}\n
+            Description: {this.descricao}\n
+            Type: {this.tipo}\n
+            Timestamp: {this.realizada_em}\n
+            Client ID: {this.id_cliente}";
     }
 
 }

@@ -10,7 +10,7 @@ RUN dotnet restore
 
 # Copy the entire project and build the app
 COPY . ./
-RUN dotnet publish -c Release -o /app/out  # Specify the output path 
+RUN dotnet publish -c Release -o /app/out
 
 # Build the runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:8.0

@@ -46,11 +46,11 @@ CREATE INDEX idx_cliente_id ON cliente(id);
 CREATE INDEX idx_transacao_cliente_id ON transacao(id_cliente);
 
 INSERT INTO cliente(id, limite, saldo)
-    VALUES (1, 100000, 0),
-(2, 80000, 0),
-(3, 1000000, 0),
-(4, 10000000, 0),
-(5, 500000, 0);
+    VALUES (1, 1000 * 100, 0),
+(2, 800 * 100, 0),
+(3, 10000 * 100, 0),
+(4, 100000 * 100, 0),
+(5, 5000 * 100, 0);
 
 -- CREATE TYPE saldo_limite AS (
 --     saldo_cliente int4,

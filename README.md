@@ -110,14 +110,18 @@ Antes do teste iniciar, um script verificará se a API está respondendo correta
 -   `tipo (char)`: **REQUIRED**.
     -   `c`: crédito incrementa valor do saldo (considerar como `income` ao invés de crédito de cartão)
     -   `d`: débito decrementa valor do saldo (ver regras)
-    -   `outro`: sem regras explícitas, assume-se que somente as opções acima serão usadas nos testes.
+    -   `outro`: sem regras explícitas, ver regras abaixo
 -   `descricao (string)`: **REQUIRED**. identificador textual da transação de **1 a 10 caracteres**. Não precisa ser único.
 
 ### Regras
 
--   Transações de débito que reduziriam o saldo do cliente para um valor menor que seu limite disponível devem ser rejeitadas com **==status code 422==** sem obrigatoriedade de ter response body.
+-   Transações com valor não inteiro ou devem ser rejeitadas com **status code 422 ou 400** (sem obrigatoriedade de ter response body) de acordo com o teste de carga
+-   Transações com `tipo` diferente de `c` ou `d` devem ser rejeitadas com **status code 422** (sem obrigatoriedade de ter response body) de acordo com o teste de carga
+-   Transações com `descricao` com mais de 10 caracteres devem ser rejeitadas com **status code 422** (sem obrigatoriedade de ter response body) de acordo com o teste de carga
+-   Transações com valor nulo devem ser rejeitadas com **status code 422 ou 400** (sem obrigatoriedade de ter response body) de acordo com o teste de carga
+-   Transações de débito que reduziriam o saldo do cliente para um valor menor que seu limite disponível devem ser rejeitadas com **status code 422** (sem obrigatoriedade de ter response body).
     -   Ex: um cliente com limite de 1000 (R$ 10) nunca deverá ter o saldo menor que -1000 (R$ -10).
--   Requisições com`id` não existente devem ser rejeitadas com ==**status code 404**== sem obrigatoriedade de ter response body.
+-   Transações com `id` de um cliente não existente devem ser rejeitadas com **status code 404** sem obrigatoriedade de ter response body.
 
 ### Response bodies
 
