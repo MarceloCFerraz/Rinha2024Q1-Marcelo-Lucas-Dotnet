@@ -1,5 +1,5 @@
 using System.Data.Common;
-using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using NpgsqlTypes;
@@ -24,26 +24,49 @@ internal class Program
             Port = dbPort,
             Username = dbUser,
             Password = dbPass,
+            //Multiplexing=true;Timeout=15;Command Timeout=15;Cancellation Timeout=-1;No Reset On Close=true;Max Auto Prepare=20;Auto Prepare Min Usages=1
             Pooling = true,
             MinPoolSize = 50,
-            MaxPoolSize = 200,
+            MaxPoolSize = 2000,
+            Multiplexing = true,
+            NoResetOnClose = true,
+            MaxAutoPrepare = 20,
+            AutoPrepareMinUsages = 1,
         };
 
         await using var dataSource = NpgsqlDataSource.Create(conStringBuilder.ConnectionString);
 
         builder.Services.AddSingleton(provider => dataSource);
 
-        var validClientIds = new List<int?>() { 1, 2, 3, 4, 5 };
+        var clientPool = new ClientPool();
+        builder.Services.AddSingleton(provider => clientPool);
 
-        builder.Services.AddSingleton(validClientIds);
+        var extratoPool = new ExtratoPool();
+        builder.Services.AddSingleton(provider => extratoPool);
+
+        var crebitoPool = new CrebitosPool();
+        builder.Services.AddSingleton(provider => crebitoPool);
+
+        builder.Services.AddRequestTimeouts(
+            options =>
+                options.DefaultPolicy = new RequestTimeoutPolicy { Timeout = TimeSpan.FromSeconds(60) }
+        );
 
         var app = builder.Build();
 
         // API Port Configuration
-        var port = Environment.GetEnvironmentVariable("API_PORT") ?? "8081";  // Default to 8081
+        var port = Environment.GetEnvironmentVariable("API_PORT") ?? "8088";  // Default to 8081
         app.Urls.Add($"http://+:{port}");
 
-        app.MapPost("/clientes/{id}/transacoes", async ([FromRoute] int id, [FromBody] Transaction transaction, NpgsqlDataSource dataSource) =>
+        app.MapPost(
+            "/clientes/{id}/transacoes",
+            async (
+                [FromRoute] int id,
+                [FromBody] Transaction transaction,
+                NpgsqlDataSource dataSource,
+                ClientPool clientPool,
+                CrebitosPool crebitosPool
+            ) =>
         {
             if (
                 (transaction.tipo != 'c'
@@ -55,17 +78,21 @@ internal class Program
             ) return Results.UnprocessableEntity();
 
             // saving processing time :)
-            if (validClientIds.FirstOrDefault(item => item == id) == null)
+            if (!new List<int>() { 1, 2, 3, 4, 5 }.Contains(id))
                 return Results.NotFound();
 
             var client = new Client();
+
+            var searchClient = clientPool.DequeueCommand();
+            searchClient.Parameters[0].Value = id;
+
             using (var connection = await dataSource.OpenConnectionAsync())
             {
-                await using var search = new NpgsqlCommand("SELECT * FROM cliente WHERE id = @id LIMIT 1", connection);
-                search.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
+                // await using var search = new NpgsqlCommand("SELECT * FROM cliente WHERE id = @id LIMIT 1", connection);
+                // search.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
 
-
-                using (var reader = await search.ExecuteReaderAsync())
+                searchClient.Connection = connection;
+                using (var reader = await searchClient.ExecuteReaderAsync())
                 {
                     // this would be more appropriate in a real world scenario
                     // if (!reader.HasRows)
@@ -78,7 +105,9 @@ internal class Program
                     client.saldo = reader.GetInt32(2);
                 }
 
-                if (transaction.tipo == 'c') // credit
+                clientPool.RequeueCommand(searchClient);
+
+                if (transaction.tipo == 'c')  // credit
                     client.saldo += (int)transaction.valor;
                 else if (transaction.tipo == 'd') // debit
                 {
@@ -87,29 +116,26 @@ internal class Program
                     client.saldo -= (int)transaction.valor;
                 }
 
+                var batch = crebitosPool.DequeueBatch();
+
+                batch.BatchCommands[0].Parameters[0].Value = client.saldo;
+                batch.BatchCommands[0].Parameters[1].Value = id;
+
+                batch.BatchCommands[1].Parameters[0].Value = (int)transaction.valor;
+                batch.BatchCommands[1].Parameters[1].Value = transaction.tipo;
+                batch.BatchCommands[1].Parameters[2].Value = transaction.descricao;
+                batch.BatchCommands[1].Parameters[3].Value = id;
+
                 using (var trans = await connection.BeginTransactionAsync())
                 {
                     try
                     {
-                        var update = new NpgsqlBatchCommand(
-                            "UPDATE cliente SET saldo = @newBalance WHERE id = @id"
-                        );
-                        update.Parameters.Add("@newBalance", NpgsqlDbType.Integer).Value = client.saldo;
-                        update.Parameters.Add("@id", NpgsqlDbType.Integer).Value = client.id;
-
-                        var newTransaction = new NpgsqlBatchCommand(
-                            "INSERT INTO transacao(valor, tipo, descricao, id_cliente) VALUES (@valor, @tipo, @descricao, @id);"
-                        );
-                        newTransaction.Parameters.Add("@valor", NpgsqlDbType.Integer).Value = transaction.valor;
-                        newTransaction.Parameters.Add("@tipo", NpgsqlDbType.Char).Value = transaction.tipo;
-                        newTransaction.Parameters.Add("@descricao", NpgsqlDbType.Varchar).Value = transaction.descricao;
-                        newTransaction.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
-
-                        await using var batch = new NpgsqlBatch(connection) { BatchCommands = { update, newTransaction } };
+                        batch.Connection = connection;
                         try
                         {
                             var result = await batch.ExecuteNonQueryAsync();
                             await trans.CommitAsync();
+
                             return Results.Ok(new { limite = client.limite, saldo = client.saldo });
                         }
                         catch (DbException)
@@ -121,14 +147,23 @@ internal class Program
                     catch (NpgsqlException ex)
                     {
                         await trans.RollbackAsync();
-                        return Results.Problem(detail: $"Database operation failed\n{ex}", statusCode: 500);
+                        return Results.Problem(detail: $"Database operation failed\n{ex}", statusCode: 422);
+                    }
+                    finally
+                    {
+                        crebitosPool.RequeueBatch(batch);
+
                     }
                 }
+
             }
         });
 
         app.MapGet("/clientes/{id}/extrato", async ([FromRoute] int id, NpgsqlDataSource dataSource) =>
         {
+            if (!new List<int>() { 1, 2, 3, 4, 5 }.Contains(id))
+                return Results.NotFound();
+
             var client = new Client() { id = id };
             var ultimas_transacoes = new List<object>();
 
@@ -137,9 +172,8 @@ internal class Program
                 using (var connection = await dataSource.OpenConnectionAsync()) // maybe close connection after each operation?
                 {
                     // saving processing time :)
-                    if (new List<int?>() { 1, 2, 3, 4, 5 }.FirstOrDefault(item => item == id) == null)
-                        return Results.NotFound();
 
+                    // not using a join because i want to easily identify when the client has no transactions and send a blank array right away
                     await using var search = new NpgsqlCommand(
                         @"SELECT * FROM cliente WHERE id = @id LIMIT 1;",
                         connection
@@ -195,7 +229,7 @@ internal class Program
             }
             catch (Exception ex)
             {
-                return Results.Problem(detail: $"Database operation failed\n{ex}", statusCode: 500);
+                return Results.Problem(detail: $"Database operation failed\n{ex}", statusCode: 422);
             }
 
             var extrato = new

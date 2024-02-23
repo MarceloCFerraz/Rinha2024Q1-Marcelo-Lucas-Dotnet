@@ -4,6 +4,7 @@ services:
     db:
         image: postgres:16.2-bullseye
         hostname: db
+        # command: "postgres -c shared_buffers=256MB -c fsync=off -c full_page_writes=off  -c max_connections=1000"
         command: "postgres -c shared_buffers=256MB -c fsync=off -c full_page_writes=off"
         ports:
             - "5432:5432"
@@ -22,12 +23,12 @@ services:
             - POSTGRES_PASSWORD=mystrongpassword
             - POSTGRES_USER=admin
             - POSTGRES_DB=rinha
-            - POSTGRES_HOST_AUTH_METHOD=trust
 
     api01: &api
         # Lembre-se de que seu serviço HTTP deve estar hospedado num repositório
         # publicamente acessível! Ex.: hub.docker.com
-        image: marcelocferraz/rinha2024q1-marcelo-lucas-dotnet:latest
+        image: rinha2024q1-marcelo-lucas-dotnet:latest
+        # image: marcelocferraz/rinha2024q1-marcelo-lucas-dotnet:latest
         hostname: api01
         ports:
             - "8081:8081"
@@ -37,7 +38,7 @@ services:
             - DB_HOSTNAME=db
             - DB_NAME=rinha
             - DB_USER=admin
-            - DB_PASS=123
+            - DB_PASS=mystrongpassword
         # Não é necessário expor qualquer porta além da porta do load balancer,
         # mas é comum as pessoas o fazerem para testarem suas APIs e conectarem
         # ao banco de dados na fase de desenvolvimento.
