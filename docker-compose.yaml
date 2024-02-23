@@ -4,20 +4,20 @@ services:
     db:
         image: postgres:16.2-bullseye
         hostname: db
-        # command: "postgres -c shared_buffers=256MB -c fsync=off -c full_page_writes=off -c max_connections=1000"
+        command: "postgres -c shared_buffers=256MB -c fsync=off -c full_page_writes=off"
         ports:
             - "5432:5432"
         volumes:
             - ./DbSchema/create_db.sql:/docker-entrypoint-initdb.d/create_db.sql
-        # deploy:
-        #     resources:
-        #         limits:
-        #             # Note que a soma de todos os limites dos serviços
-        #             # aqui declarados é de 1.5 unidades de CPU e 550MB
-        #             # de memória. A distribuição feita aqui é apenas
-        #             # um exemplo – distribua como quiser.
-        #             cpus: "0.13"
-        #             memory: "140MB"
+        # Note que a soma de todos os limites dos serviços
+        # aqui declarados é de 1.5 unidades de CPU e 550MB
+        # de memória. A distribuição feita aqui é apenas
+        # um exemplo – distribua como quiser.
+        deploy:
+            resources:
+                limits:
+                    cpus: "0.4"
+                    memory: "220MB"
         environment:
             - POSTGRES_PASSWORD=mystrongpassword
             - POSTGRES_USER=admin
@@ -43,8 +43,11 @@ services:
         # ao banco de dados na fase de desenvolvimento.
         depends_on:
             - db
-        # deploy:
-        #     resources:
+        deploy:
+            resources:
+                limits:
+                    cpus: "0.4"
+                    memory: "115MB"
         #         limits:
         #             cpus: "0.6"
         #             memory: "200MB"
@@ -69,11 +72,11 @@ services:
         ports:
             # Obrigatório expor/usar a porta 9999 no load balancer!
             - "9999:9999"
-        # deploy:
-        #     resources:
-        #         limits:
-        #             cpus: "0.17"
-        #             memory: "10MB"
+        deploy:
+            resources:
+                limits:
+                    cpus: "0.3"
+                    memory: "100MB"
 
 # O uso do modo `bridge` deve ser adequado à carga que será usada no teste.
 # A edição anterior se beneficiou do modo host pois o volume de requisições
