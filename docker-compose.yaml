@@ -4,7 +4,7 @@ services:
     db:
         image: postgres:16.2-bullseye
         hostname: db
-        # removing these got me 300 KOs again, leaving it got me 1 KO. Worth it
+        # removing these got me 300 KOs again, leaving it got me 1 KO. I could make tables UNLOGGED to avoid writing to WAL too, but didn't need to
         command: "postgres -c checkpoint_timeout=600 -c max_wal_size=4096 -c synchronous_commit=0 -c fsync=0 -c full_page_writes=0"
         ports:
             - "5432:5432"
@@ -13,17 +13,15 @@ services:
         deploy:
             resources:
                 limits:
-                    cpus: "0.6"
-                    memory: "300MB"
+                    cpus: "0.6" # got up to 50ish %
+                    memory: "300MB" # got up to 100ish MB
         environment:
             - POSTGRES_PASSWORD=mystrongpassword
             - POSTGRES_USER=admin
             - POSTGRES_DB=rinha
 
     api01: &api
-        # Lembre-se de que seu serviço HTTP deve estar hospedado num repositório
-        # publicamente acessível! Ex.: hub.docker.com
-        image: rinha2024q1-marcelo-lucas-dotnet:latest
+        image: marcelocferraz/rinha2024q1-marcelo-lucas-dotnet:latest
         hostname: api01
         ports:
             - "8081:8081"
@@ -34,16 +32,13 @@ services:
             - DB_NAME=rinha
             - DB_USER=admin
             - DB_PASS=mystrongpassword
-        # Não é necessário expor qualquer porta além da porta do load balancer,
-        # mas é comum as pessoas o fazerem para testarem suas APIs e conectarem
-        # ao banco de dados na fase de desenvolvimento.
         depends_on:
             - db
         deploy:
             resources:
                 limits:
-                    cpus: "0.30"
-                    memory: "100MB"
+                    cpus: "0.30" # got up to 20%
+                    memory: "100MB" # got up to 50ish MB
 
     api02:
         <<: *api
@@ -68,8 +63,8 @@ services:
         deploy:
             resources:
                 limits:
-                    cpus: "0.3"
-                    memory: "50MB"
+                    cpus: "0.3" # got up to 10%
+                    memory: "50MB" # got to 14 MB
 
 networks:
     default:

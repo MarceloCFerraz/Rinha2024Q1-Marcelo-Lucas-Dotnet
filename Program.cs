@@ -1,5 +1,4 @@
 using System.Data.Common;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using NpgsqlTypes;
@@ -10,8 +9,8 @@ internal class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
-        // var dbHostName = Environment.GetEnvironmentVariable("DB_HOSTNAME") ?? "localhost"; // uncomment if testing with `dotnet run`
-        var dbHostName = Environment.GetEnvironmentVariable("DB_HOSTNAME") ?? "db"; // comment if testing with `dotnet run`
+        // var dbHostName = Environment.GetEnvironmentVariable("DB_HOSTNAME") ?? "localhost"; // uncomment if testing with `dotnet run`. Remember to comment the line below
+        var dbHostName = Environment.GetEnvironmentVariable("DB_HOSTNAME") ?? "db";
         var dbName = Environment.GetEnvironmentVariable("DB_NAME") ?? "rinha";
         var dbPort = int.Parse(Environment.GetEnvironmentVariable("DB_PORT") ?? "5432");
         var dbUser = Environment.GetEnvironmentVariable("DB_USER") ?? "admin";
@@ -25,8 +24,8 @@ internal class Program
             Username = dbUser,
             Password = dbPass,
             Pooling = true,
-            MinPoolSize = 75,
-            MaxPoolSize = 75,
+            MinPoolSize = 10,
+            MaxPoolSize = 10,
         };
 
         await using var dataSource = NpgsqlDataSource.Create(conStringBuilder.ConnectionString);
@@ -50,80 +49,45 @@ internal class Program
                 && transaction.tipo != 'd') // reject transactions that are not credit or debit
                 || string.IsNullOrEmpty(transaction.descricao) // reject null or empty descriptions
                 || transaction.descricao.Length > 10 // reject descriptions with more than 10 chars
-                || transaction.valor % 1 != 0 // reject double values
-                || transaction.valor <= 0 // reject useless and negative valued transactions
+                || transaction.valor % 1 != 0 // reject double values, but *.0 values are ok
+                || transaction.valor <= 0 // reject negative values and transactions with value 0
             ) return Results.UnprocessableEntity();
 
             // saving processing time :)
-            if (validClientIds.FirstOrDefault(item => item == id) == null)
+            if (!validClientIds.Contains(id))
                 return Results.NotFound();
 
-            var client = new Client();
+            // this would be more appropriate in a real world scenario
+            // if (!reader.HasRows)
+            //     return Results.NotFound();
+
+            var operation = transaction.tipo == 'c' ? "credit" : "debit";
             using (var connection = await dataSource.OpenConnectionAsync())
             {
-                await using var search = new NpgsqlCommand("SELECT * FROM cliente WHERE id = @id LIMIT 1", connection);
-                search.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
+                await using var update = new NpgsqlCommand($"SELECT success, client_limit, new_balance FROM {operation}($1, $2, $3)", connection);
+                update.Parameters.AddWithValue(id);
+                update.Parameters.AddWithValue((int)transaction.valor);
+                update.Parameters.AddWithValue(transaction.descricao);
 
-
-                using (var reader = await search.ExecuteReaderAsync())
+                try
                 {
-                    // this would be more appropriate in a real world scenario
-                    // if (!reader.HasRows)
-                    //     return Results.NotFound();
-
-                    await reader.ReadAsync();
-
-                    client.id = id;
-                    client.limite = reader.GetInt32(1);
-                    client.saldo = reader.GetInt32(2);
-                }
-
-                if (transaction.tipo == 'c') // credit
-                    client.saldo += (int)transaction.valor;
-                else if (transaction.tipo == 'd') // debit
-                {
-                    if (client.saldo - transaction.valor < -client.limite)
-                        return Results.UnprocessableEntity();
-                    client.saldo -= (int)transaction.valor;
-                }
-
-                using (var trans = await connection.BeginTransactionAsync())
-                {
-                    try
+                    using (var reader = await update.ExecuteReaderAsync())
                     {
-                        var update = new NpgsqlBatchCommand(
-                            "UPDATE cliente SET saldo = @newBalance WHERE id = @id"
-                        );
-                        update.Parameters.Add("@newBalance", NpgsqlDbType.Integer).Value = client.saldo;
-                        update.Parameters.Add("@id", NpgsqlDbType.Integer).Value = client.id;
+                        await reader.ReadAsync();
 
-                        var newTransaction = new NpgsqlBatchCommand(
-                            "INSERT INTO transacao(valor, tipo, descricao, id_cliente) VALUES (@valor, @tipo, @descricao, @id);"
-                        );
-                        newTransaction.Parameters.Add("@valor", NpgsqlDbType.Integer).Value = transaction.valor;
-                        newTransaction.Parameters.Add("@tipo", NpgsqlDbType.Char).Value = transaction.tipo;
-                        newTransaction.Parameters.Add("@descricao", NpgsqlDbType.Varchar).Value = transaction.descricao;
-                        newTransaction.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
+                        bool success = reader.GetBoolean(0);
 
-                        await using var batch = new NpgsqlBatch(connection) { BatchCommands = { update, newTransaction } };
-                        try
-                        {
-                            var result = await batch.ExecuteNonQueryAsync();
-                            await trans.CommitAsync();
-                            return Results.Ok(new { limite = client.limite, saldo = client.saldo });
-                        }
-                        catch (DbException)
-                        {
-                            Console.WriteLine("One of the transactions (INSERT or UPDATE) failed. Rolling back");
-                            throw;
-                        }
-                    }
-                    catch (NpgsqlException ex)
-                    {
-                        await trans.RollbackAsync();
-                        return Results.Problem(detail: $"Database operation failed\n{ex}", statusCode: 500);
+                        if (success)
+                            return Results.Ok(new { limite = reader.GetInt32(1), saldo = reader.GetInt32(2) });
                     }
                 }
+                catch (DbException ex)
+                {
+                    Console.WriteLine($"Something went wrong and the operation was cancelled:\n{ex}");
+                }
+
+                // if the operation fails, the database will rollback and the api will return status code 422
+                return Results.UnprocessableEntity();
             }
         });
 
@@ -137,8 +101,12 @@ internal class Program
                 using (var connection = await dataSource.OpenConnectionAsync()) // maybe close connection after each operation?
                 {
                     // saving processing time :)
-                    if (new List<int?>() { 1, 2, 3, 4, 5 }.FirstOrDefault(item => item == id) == null)
+                    if (!validClientIds.Contains(id))
                         return Results.NotFound();
+
+                    // this would be more appropriate in a real world scenario
+                    // if (!reader.HasRows)
+                    //     return Results.NotFound();
 
                     await using var search = new NpgsqlCommand(
                         @"SELECT * FROM cliente WHERE id = @id LIMIT 1;",
@@ -148,9 +116,6 @@ internal class Program
 
                     using (var reader = await search.ExecuteReaderAsync())
                     {
-                        // this would be more appropriate in a real world scenario
-                        // if (!reader.HasRows)
-                        //     return Results.NotFound();
                         await reader.ReadAsync();
                         client.limite = reader.GetInt32(1);
                         client.saldo = reader.GetInt32(2);

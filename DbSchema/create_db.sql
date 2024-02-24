@@ -45,6 +45,8 @@ CREATE INDEX idx_cliente_id ON cliente(id);
 
 CREATE INDEX idx_transacao_cliente_id ON transacao(id_cliente);
 
+CREATE INDEX idx_transacao_cliente_tempo ON transacao(id_cliente, realizada_em DESC);
+
 INSERT INTO cliente(id, limite, saldo)
     VALUES (1, 1000 * 100, 0),
 (2, 800 * 100, 0),
@@ -52,59 +54,110 @@ INSERT INTO cliente(id, limite, saldo)
 (4, 100000 * 100, 0),
 (5, 5000 * 100, 0);
 
--- CREATE TYPE saldo_limite AS (
---     saldo_cliente int4,
---     limite_cliente int4,
---     success bool
--- );
--- CREATE OR REPLACE FUNCTION criar_transacao_debito(valor integer, id_cliente int4, descricao varchar(10))
---     RETURNS saldo_limite
---     LANGUAGE plpgsql
---     AS $$
--- DECLARE
---     result saldo_limite;
--- BEGIN
---     UPDATE
---         cliente
---     SET
---         saldo = saldo - valor
---     WHERE
---         id = id_cliente
---         AND saldo - valor >= limite *(-1)
---     RETURNING
---         saldo,
---         limite INTO result.saldo_cliente,
---         result.limite_cliente;
---     IF result.saldo_cliente >= result.limite_cliente *(-1) THEN
---         result.success := TRUE;
---         INSERT INTO transacao(valor, tipo, descricao, id_cliente)
---             VALUES (valor, 'd', descricao, id_cliente);
---     ELSE
---         result.success := FALSE;
---     END IF;
---     RETURN result;
--- END;
--- $$;
--- CREATE OR REPLACE FUNCTION criar_transacao_credito(valor integer, id_cliente int4, descricao varchar(10))
---     RETURNS saldo_limite
---     LANGUAGE plpgsql
---     AS $$
--- DECLARE
---     result saldo_limite;
--- BEGIN
---     UPDATE
---         cliente
---     SET
---         saldo = saldo + valor
---     WHERE
---         id = id_cliente
---     RETURNING
---         saldo,
---         limite INTO result.saldo_cliente,
---         result.limite_cliente;
---     result.success := TRUE;
---     INSERT INTO transacao(valor, tipo, descricao, id_cliente)
---         VALUES (valor, 'c', descricao, id_cliente);
---     RETURN result;
--- END;
--- $$;
+CREATE OR REPLACE FUNCTION debit(_customer_id int, _transaction_value int, _transaction_description varchar(10))
+RETURNS TABLE(success boolean, client_limit int, new_balance int)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    client_balance int;
+    client_limit int;
+BEGIN
+    PERFORM pg_advisory_xact_lock(_customer_id);
+
+    SELECT
+        saldo, limite
+    INTO
+        client_balance, client_limit
+    FROM cliente
+    WHERE id = _customer_id
+    FOR UPDATE;
+
+    IF (client_balance - _transaction_value) >= (-1 * client_limit) THEN
+        UPDATE cliente
+            SET saldo = saldo - _transaction_value
+        WHERE id = _customer_id;
+
+        INSERT INTO transacao(id_cliente, valor, tipo, descricao)
+            VALUES (_customer_id, _transaction_value, 'd', _transaction_description);
+
+        RETURN QUERY SELECT TRUE, client_limit, client_balance - _transaction_value;
+    ELSE --tried doing the other way around (new balance < -limit), but apparently a return doesn't end the function call, so even if the operation is not allowed, the balance gets updated
+        RETURN QUERY SELECT FALSE, -1, -1;
+    END IF;
+
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Transaction rolled back: %', SQLERRM;
+END;
+$$;
+
+
+CREATE OR REPLACE FUNCTION credit(_customer_id int, _transaction_value int, _transaction_description varchar(10))
+RETURNS TABLE(success boolean, client_limit int, new_balance int)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    client_balance int;
+    client_limit int;
+BEGIN
+    PERFORM pg_advisory_xact_lock(_customer_id);
+
+    SELECT
+        saldo, limite
+    INTO
+        client_balance, client_limit
+    FROM cliente
+    WHERE id = _customer_id
+    FOR UPDATE;
+
+    -- Update the balance
+    UPDATE cliente
+        SET saldo = saldo + _transaction_value
+    WHERE id = _customer_id;
+
+    -- Insert the transaction
+    INSERT INTO transacao(id_cliente, valor, tipo, descricao)
+        VALUES (_customer_id, _transaction_value, 'c', _transaction_description);
+
+    -- Return success, limit, and the updated balance
+    RETURN QUERY SELECT TRUE, client_limit, client_balance + _transaction_value;
+
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Transaction rolled back: %', SQLERRM;
+END;
+$$;
+
+
+-- Still haven't tested using this one
+CREATE OR REPLACE FUNCTION get_client_data(_customer_id int)
+    RETURNS TABLE(
+        saldo int,
+        limite int,
+        data_extrato timestamptz,
+        ultimas_transacoes json
+    )
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        saldo,
+        limite,
+        CURRENT_TIMESTAMP AS data_extrato,
+        json_agg(to_jsonb(trans) - 'id_cliente' - 'realizada_em') AS ultimas_transacoes
+    FROM
+        cliente
+        JOIN(
+            SELECT
+                *
+            FROM
+                transacao
+            WHERE
+                id_cliente = _customer_id
+            ORDER BY
+                realizada_em DESC
+            LIMIT 10) trans ON cliente.id = trans.id_cliente
+    WHERE
+        cliente.id = _customer_id;
+END;
+$$
+LANGUAGE plpgsql;
+

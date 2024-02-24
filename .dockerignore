@@ -1,6 +1,11 @@
+.vscode
 obj
 bin
 OfficialRepo
 load-test
 NginxConf
+DbSchema
+load-test
+NginxConf
+Scripts
 DbSchema
