@@ -47,34 +47,12 @@ CREATE INDEX idx_transacao_cliente_tempo ON transacao(id_cliente, realizada_em D
 
 CREATE INDEX idx_transacao_cliente_id ON transacao(id_cliente);
 
-CREATE MATERIALIZED VIEW recent_transactions AS
-SELECT
-    id_cliente,
-    realizada_em,
-    json_agg(json_build_object(
-        'valor', valor,
-        'tipo', tipo,
-        'descricao', descricao,
-        'realizada_em', realizada_em
-    )) FILTER (WHERE valor IS NOT NULL)::jsonb as trans
-FROM transacao
-GROUP BY id_cliente, realizada_em;
-
-CREATE UNIQUE INDEX idx_recent_transactions ON recent_transactions(id_cliente, realizada_em);
-
-
 INSERT INTO cliente(id, limite, saldo)
     VALUES (1, 1000 * 100, 0),
 (2, 800 * 100, 0),
 (3, 10000 * 100, 0),
 (4, 100000 * 100, 0),
 (5, 5000 * 100, 0);
-
-CREATE OR REPLACE PROCEDURE refresh_recent_transactions() AS $$
-BEGIN
-    REFRESH MATERIALIZED VIEW recent_transactions;
-END;
-$$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION debit(_customer_id int, _transaction_value int, _transaction_description varchar(10))
 RETURNS TABLE(success boolean, client_limit int, new_balance int)
@@ -101,7 +79,6 @@ BEGIN
 
         INSERT INTO transacao(id_cliente, valor, tipo, descricao)
             VALUES (_customer_id, _transaction_value, 'd', _transaction_description);
-        CALL refresh_recent_transactions();
 
         RETURN QUERY SELECT TRUE, client_limit, client_balance - _transaction_value;
     ELSE --tried doing the other way around (new balance < -limit), but apparently a return doesn't end the function call, so even if the operation is not allowed, the balance gets updated
@@ -149,6 +126,7 @@ BEGIN
 END;
 $$;
 
+
 -- Still haven't tested using this one
 CREATE OR REPLACE FUNCTION get_client_data(_customer_id int)
 RETURNS TABLE(
@@ -161,15 +139,43 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT saldo,
+    SELECT
+        saldo, -- total
         limite,
-        CURRENT_TIMESTAMP as data_extrato,
-        COALESCE(recent_transactions.trans, '[]')
-    FROM cliente
-    LEFT JOIN recent_transactions ON cliente.id = recent_transactions.id_cliente
-    WHERE cliente.id = _customer_id
-    ORDER BY realizada_em DESC
-    LIMIT 10;
+        CURRENT_TIMESTAMP, -- data_extrato
+        COALESCE(
+            json_agg(
+                json_build_object('valor', trans.valor,'tipo', trans.tipo,'descricao', trans.descricao,'realizada_em', trans.realizada_em))
+                FILTER (WHERE trans.valor IS NOT NULL
+            ),
+            '[]'
+        )::jsonb -- ultimas_transacoes
+        FROM cliente
+        LEFT OUTER JOIN (
+            SELECT *
+            FROM transacao
+            WHERE id_cliente = _customer_id
+            ORDER BY realizada_em DESC
+            LIMIT 10
+        ) trans
+        ON cliente.id = trans.id_cliente
+        WHERE cliente.id = _customer_id
+        GROUP BY saldo, limite;
+    -- {
+    --     saldo = {
+    --         total = client.saldo,
+    --         data_extrato = DateTime.UtcNow,
+    --         limite = client.limite
+    --     },
+    --     ultimas_transacoes = [
+    --         {
+    --             valor = extratoReader.GetInt32(0),
+    --             tipo = extratoReader.GetChar(1),
+    --             descricao = extratoReader.GetString(2),
+    --             realizada_em = extratoReader.GetDateTime(3)
+    --         },
+    --      ]
+    -- };
 END;
 $$
 
