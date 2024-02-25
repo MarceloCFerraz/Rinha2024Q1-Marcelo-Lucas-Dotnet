@@ -25,8 +25,8 @@ internal class Program
             Username = dbUser,
             Password = dbPass,
             Pooling = true,
-            MinPoolSize = 10,
-            MaxPoolSize = 10,
+            MinPoolSize = 20,
+            MaxPoolSize = 20,
         };
 
         await using var dataSource = NpgsqlDataSource.Create(conStringBuilder.ConnectionString);

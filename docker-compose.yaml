@@ -13,7 +13,7 @@ services:
         deploy:
             resources:
                 limits:
-                    cpus: "0.6" # got up to 50ish %
+                    cpus: "1.05" # got up to 50ish %
                     memory: "300MB" # got up to 100ish MB
         environment:
             - POSTGRES_PASSWORD=mystrongpassword
@@ -37,7 +37,7 @@ services:
         deploy:
             resources:
                 limits:
-                    cpus: "0.30" # got up to 20%
+                    cpus: "0.15" # got up to 20%
                     memory: "100MB" # got up to 50ish MB
 
     api02:
@@ -58,12 +58,11 @@ services:
             - api01
             - api02
         ports:
-            # Obrigatório expor/usar a porta 9999 no load balancer!
             - "9999:9999"
         deploy:
             resources:
                 limits:
-                    cpus: "0.3" # got up to 10%
+                    cpus: "0.15" # got up to 10%
                     memory: "50MB" # got to 14 MB
 
 networks:
