@@ -17,7 +17,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 
 # Specify the target runtime using a placeholder (modify if needed)
-ARG TARGET_RUNTIME=linux-x64 
+ARG TARGET_RUNTIME=linux-x64
 
 COPY --from=build /app/out ./
 

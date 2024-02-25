@@ -1,27 +1,5 @@
 SET timezone TO 'UTC';
 
-SET statement_timeout = 0;
-
-SET lock_timeout = 0;
-
-SET idle_in_transaction_session_timeout = 0;
-
-SET client_encoding = 'UTF8';
-
-SET standard_conforming_strings = ON;
-
-SET check_function_bodies = FALSE;
-
-SET xmloption = content;
-
-SET client_min_messages = warning;
-
-SET row_security = OFF;
-
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
-
 DROP TABLE IF EXISTS cliente;
 
 DROP TABLE IF EXISTS transacao;
@@ -71,7 +49,7 @@ BEGIN
     FROM cliente
     WHERE id = _customer_id
     FOR UPDATE;
-
+    --tried doing the other way around (new balance < -limit), but apparently a return doesn't end the function call, so even if the operation is not allowed, the balance gets updated
     IF (client_balance - _transaction_value) >= (-1 * client_limit) THEN
         UPDATE cliente
             SET saldo = saldo - _transaction_value
@@ -81,7 +59,7 @@ BEGIN
             VALUES (_customer_id, _transaction_value, 'd', _transaction_description);
 
         RETURN QUERY SELECT TRUE, client_limit, client_balance - _transaction_value;
-    ELSE --tried doing the other way around (new balance < -limit), but apparently a return doesn't end the function call, so even if the operation is not allowed, the balance gets updated
+    ELSE
         RETURN QUERY SELECT FALSE, -1, -1;
     END IF;
 
@@ -109,16 +87,13 @@ BEGIN
     WHERE id = _customer_id
     FOR UPDATE;
 
-    -- Update the balance
     UPDATE cliente
         SET saldo = saldo + _transaction_value
     WHERE id = _customer_id;
 
-    -- Insert the transaction
     INSERT INTO transacao(id_cliente, valor, tipo, descricao)
         VALUES (_customer_id, _transaction_value, 'c', _transaction_description);
 
-    -- Return success, limit, and the updated balance
     RETURN QUERY SELECT TRUE, client_limit, client_balance + _transaction_value;
 
     EXCEPTION WHEN OTHERS THEN
@@ -161,36 +136,8 @@ BEGIN
         ON cliente.id = trans.id_cliente
         WHERE cliente.id = _customer_id
         GROUP BY saldo, limite;
-    -- {
-    --     saldo = {
-    --         total = client.saldo,
-    --         data_extrato = DateTime.UtcNow,
-    --         limite = client.limite
-    --     },
-    --     ultimas_transacoes = [
-    --         {
-    --             valor = extratoReader.GetInt32(0),
-    --             tipo = extratoReader.GetChar(1),
-    --             descricao = extratoReader.GetString(2),
-    --             realizada_em = extratoReader.GetDateTime(3)
-    --         },
-    --      ]
-    -- };
 END;
 $$
-
--- SELECT saldo as total, limite, CURRENT_TIMESTAMP as data_extrato, json_agg(to_jsonb(trans) - 'id_cliente') as ultimas_transacoes FROM cliente LEFT OUTER JOIN ( SELECT valor, tipo, descricao, realizada_em, id_cliente FROM transacao WHERE id_cliente = 1 ORDER BY realizada_em DESC LIMIT 10 ) trans ON cliente.id = trans.id_cliente WHERE cliente.id = 1 GROUP BY saldo, limite;
--- OUTPUTS:
---  total | limite |         data_extrato          | ultimas_transacoes
--- -------+--------+-------------------------------+--------------------
---      0 | 100000 | 2024-02-25 14:05:55.663607+00 | [null]
-
--- SELECT saldo as total, limite, CURRENT_TIMESTAMP as data_extrato, COALESCE(json_agg(json_build_object('valor', trans.valor,'tipo', trans.tipo,'descricao', trans.descricao,'realizada_em', trans.realizada_em)) FILTER (WHERE trans.valor IS NOT NULL), '[]') as ultimas_transacoes FROM cliente LEFT OUTER JOIN ( SELECT * FROM transacao WHERE id_cliente = 1 ORDER BY realizada_em DESC LIMIT 10 ) trans ON cliente.id = trans.id_cliente WHERE cliente.id = 1 GROUP BY saldo, limite;
-
--- OUTPUTS:
---  total | limite |         data_extrato          |                              ultimas_transacoes
--- -------+--------+-------------------------------+------------------------------------------------------------------------------
---      0 | 100000 | 2024-02-25 14:05:34.139764+00 | [{"valor" : null, "tipo" : null, "descricao" : null, "realizada_em" : null}]
 
 -- UPDATE cliente SET saldo = saldo + 100 WHERE id = 1; INSERT INTO transacao(id_cliente, valor, tipo, descricao) VALUES (1, 100, 'c', 'test');
 -- UPDATE cliente SET saldo = 0 WHERE id = 1; DELETE FROM transacao WHERE id_cliente = 1;

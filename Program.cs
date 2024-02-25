@@ -2,7 +2,6 @@ using System.Data.Common;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
-using NpgsqlTypes;
 
 internal class Program
 {
@@ -33,10 +32,6 @@ internal class Program
 
         builder.Services.AddSingleton(provider => dataSource);
 
-        var validClientIds = new List<int?>() { 1, 2, 3, 4, 5 };
-
-        builder.Services.AddSingleton(validClientIds);
-
         var app = builder.Build();
 
         // API Port Configuration
@@ -45,27 +40,19 @@ internal class Program
 
         app.MapPost("/clientes/{id}/transacoes", async ([FromRoute] int id, [FromBody] Transaction transaction, NpgsqlDataSource dataSource) =>
         {
-            if (
-                (transaction.tipo != 'c'
-                && transaction.tipo != 'd') // reject transactions that are not credit or debit
-                || string.IsNullOrEmpty(transaction.descricao) // reject null or empty descriptions
-                || transaction.descricao.Length > 10 // reject descriptions with more than 10 chars
-                || transaction.valor % 1 != 0 // reject double values, but *.0 values are ok
-                || transaction.valor <= 0 // reject negative values and transactions with value 0
-            ) return Results.UnprocessableEntity();
+            if (transaction.IsInvalid()) return Results.UnprocessableEntity();
 
             // saving processing time :)
-            if (!validClientIds.Contains(id))
+            if (Client.IsInvalid(id))
                 return Results.NotFound();
-
-            // this would be more appropriate in a real world scenario
-            // if (!reader.HasRows)
-            //     return Results.NotFound();
 
             var operation = transaction.tipo == 'c' ? "credit" : "debit";
             using (var connection = await dataSource.OpenConnectionAsync())
             {
-                await using var update = new NpgsqlCommand($"SELECT success, client_limit, new_balance FROM {operation}($1, $2, $3)", connection);
+                await using var update = new NpgsqlCommand(
+                    $"SELECT success, client_limit, new_balance FROM {operation}($1, $2, $3)",
+                    connection
+                );
                 update.Parameters.AddWithValue(id);
                 update.Parameters.AddWithValue((int)transaction.valor);
                 update.Parameters.AddWithValue(transaction.descricao);
@@ -76,10 +63,11 @@ internal class Program
                     {
                         await reader.ReadAsync();
 
-                        bool success = reader.GetBoolean(0);
-
-                        if (success)
-                            return Results.Ok(new { limite = reader.GetInt32(1), saldo = reader.GetInt32(2) });
+                        if (reader.GetBoolean(0)) // if (success)
+                            return Results.Ok(new NewTransactionResponse(
+                                reader.GetInt32(ordinal: 1),
+                                reader.GetInt32(2))
+                            );
                     }
                 }
                 catch (DbException ex)
@@ -94,27 +82,16 @@ internal class Program
 
         app.MapGet("/clientes/{id}/extrato", async ([FromRoute] int id, NpgsqlDataSource dataSource) =>
         {
-            int saldo, limite;
-            DateTime data_extrato;
-            List<Transaction> ultimas_transacoes;
+            // saving processing time :)
+            if (Client.IsInvalid(id))
+                return Results.NotFound();
+
+            var response = new ExtratoResponse();
+            var details = new ExtratoDetails();
             try
             {
                 using (var connection = await dataSource.OpenConnectionAsync()) // maybe close connection after each operation?
                 {
-                    // saving processing time :)
-                    if (!validClientIds.Contains(id))
-                        return Results.NotFound();
-
-                    // this would be more appropriate in a real world scenario
-                    // if (!reader.HasRows)
-                    //     return Results.NotFound();
-
-                    /*
-                        customer_balance int,
-                        customer_limit int,
-                        report_date timestamptz,
-                        last_transactions json
-                    */
                     await using var search = new NpgsqlCommand(
                         "SELECT customer_balance, customer_limit, report_date, last_transactions FROM get_client_data($1);",
                         connection
@@ -125,11 +102,14 @@ internal class Program
                     using (var reader = await search.ExecuteReaderAsync())
                     {
                         await reader.ReadAsync();
-                        saldo = reader.GetInt32(0);
-                        limite = reader.GetInt32(1);
-                        data_extrato = reader.GetDateTime(2);
-                        Console.WriteLine(reader.GetFieldType(3));
-                        ultimas_transacoes = JsonSerializer.Deserialize<List<Transaction>>(reader.GetString(3)) ?? new List<Transaction>();
+                        details.total = reader.GetInt32(0);
+                        details.limite = reader.GetInt32(1);
+                        details.data_extrato = reader.GetDateTime(2);
+                        // ultimas_transacoes arrives here as string, so need to deserialize it
+                        response.ultimas_transacoes = JsonSerializer
+                            .Deserialize<List<TransactionHistory>>(reader.GetString(3))
+                            ?? [];
+                        // ultimas_transacoes = JsonSerializer.Deserialize<List<Transaction>>(reader.GetString(3)) ?? new List<Transaction>();
                     }
                 }
             }
@@ -137,68 +117,11 @@ internal class Program
             {
                 return Results.Problem(detail: $"Database operation failed\n{ex}", statusCode: 500);
             }
+            response.saldo = details;
 
-            return Results.Ok(new
-            {
-                saldo = new
-                {
-                    total = saldo,
-                    data_extrato = data_extrato,
-                    limite = limite
-                },
-                ultimas_transacoes = ultimas_transacoes
-            });
+            // Console.WriteLine(JsonSerializer.Serialize(response));
 
-            //         await using var lastTransactions = new NpgsqlCommand(
-            //             @"SELECT valor, tipo, descricao, realizada_em
-            //             FROM transacao
-            //             WHERE id_cliente = @id
-            //             ORDER BY realizada_em DESC LIMIT 10;",
-            //             connection
-            //         );
-            //         lastTransactions.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
-
-            //         using (var extratoReader = await lastTransactions.ExecuteReaderAsync())
-            //         {
-            //             if (!extratoReader.HasRows)
-            //             {
-            //                 return Results.Ok(new
-            //                 {
-            //                     saldo = new
-            //                     {
-            //                         total = client.saldo,
-            //                         data_extrato = DateTime.UtcNow,
-            //                         limite = client.limite
-            //                     },
-            //                     ultimas_transacoes = ultimas_transacoes
-            //                 });
-            //             };
-            //             while (await extratoReader.ReadAsync())
-            //             {
-            //                 ultimas_transacoes.Add(new
-            //                 {
-            //                     valor = extratoReader.GetInt32(0),
-            //                     tipo = extratoReader.GetChar(1),
-            //                     descricao = extratoReader.GetString(2),
-            //                     realizada_em = extratoReader.GetDateTime(3)
-            //                 });
-            //             }
-            //         }
-            //     }
-            // }
-
-
-            // var extrato = new
-            // {
-            //     saldo = new
-            //     {
-            //         total = client.saldo,
-            //         data_extrato = DateTime.UtcNow,
-            //         client.limite
-            //     },
-            //     ultimas_transacoes
-            // };
-            // return Results.Ok(extrato);
+            return Results.Ok(response);
         });
 
         app.Run();
