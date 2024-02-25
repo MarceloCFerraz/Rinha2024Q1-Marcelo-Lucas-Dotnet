@@ -1,6 +1,6 @@
 public class Transaction
 {
-    public int id { get; set; }
+    public int? id { get; set; }
     public decimal valor { get; set; }
     public string descricao { get; set; } = "";
     public char tipo { get; set; } // Using 'string' here, if 'c' or 'd'

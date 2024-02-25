@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using NpgsqlTypes;
@@ -93,9 +94,9 @@ internal class Program
 
         app.MapGet("/clientes/{id}/extrato", async ([FromRoute] int id, NpgsqlDataSource dataSource) =>
         {
-            var client = new Client() { id = id };
-            var ultimas_transacoes = new List<object>();
-
+            int saldo, limite;
+            DateTime data_extrato;
+            List<Transaction> ultimas_transacoes;
             try
             {
                 using (var connection = await dataSource.OpenConnectionAsync()) // maybe close connection after each operation?
@@ -108,53 +109,27 @@ internal class Program
                     // if (!reader.HasRows)
                     //     return Results.NotFound();
 
+                    /*
+                        customer_balance int,
+                        customer_limit int,
+                        report_date timestamptz,
+                        last_transactions json
+                    */
                     await using var search = new NpgsqlCommand(
-                        @"SELECT * FROM cliente WHERE id = @id LIMIT 1;",
+                        "SELECT customer_balance, customer_limit, report_date, last_transactions FROM get_client_data($1);",
                         connection
                     );
-                    search.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
+                    search.Parameters.AddWithValue(id);
+
 
                     using (var reader = await search.ExecuteReaderAsync())
                     {
                         await reader.ReadAsync();
-                        client.limite = reader.GetInt32(1);
-                        client.saldo = reader.GetInt32(2);
-                    }
-
-                    await using var lastTransactions = new NpgsqlCommand(
-                        @"SELECT valor, tipo, descricao, realizada_em
-                        FROM transacao
-                        WHERE id_cliente = @id
-                        ORDER BY realizada_em DESC LIMIT 10;",
-                        connection
-                    );
-                    lastTransactions.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
-
-                    using (var extratoReader = await lastTransactions.ExecuteReaderAsync())
-                    {
-                        if (!extratoReader.HasRows)
-                        {
-                            return Results.Ok(new
-                            {
-                                saldo = new
-                                {
-                                    total = client.saldo,
-                                    data_extrato = DateTime.UtcNow,
-                                    limite = client.limite
-                                },
-                                ultimas_transacoes = ultimas_transacoes
-                            });
-                        };
-                        while (await extratoReader.ReadAsync())
-                        {
-                            ultimas_transacoes.Add(new
-                            {
-                                valor = extratoReader.GetInt32(0),
-                                tipo = extratoReader.GetChar(1),
-                                descricao = extratoReader.GetString(2),
-                                realizada_em = extratoReader.GetDateTime(3)
-                            });
-                        }
+                        saldo = reader.GetInt32(0);
+                        limite = reader.GetInt32(1);
+                        data_extrato = reader.GetDateTime(2);
+                        Console.WriteLine(reader.GetFieldType(3));
+                        ultimas_transacoes = JsonSerializer.Deserialize<List<Transaction>>(reader.GetString(3)) ?? new List<Transaction>();
                     }
                 }
             }
@@ -163,17 +138,67 @@ internal class Program
                 return Results.Problem(detail: $"Database operation failed\n{ex}", statusCode: 500);
             }
 
-            var extrato = new
+            return Results.Ok(new
             {
                 saldo = new
                 {
-                    total = client.saldo,
-                    data_extrato = DateTime.UtcNow,
-                    client.limite
+                    total = saldo,
+                    data_extrato = data_extrato,
+                    limite = limite
                 },
-                ultimas_transacoes
-            };
-            return Results.Ok(extrato);
+                ultimas_transacoes = ultimas_transacoes
+            });
+
+            //         await using var lastTransactions = new NpgsqlCommand(
+            //             @"SELECT valor, tipo, descricao, realizada_em
+            //             FROM transacao
+            //             WHERE id_cliente = @id
+            //             ORDER BY realizada_em DESC LIMIT 10;",
+            //             connection
+            //         );
+            //         lastTransactions.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
+
+            //         using (var extratoReader = await lastTransactions.ExecuteReaderAsync())
+            //         {
+            //             if (!extratoReader.HasRows)
+            //             {
+            //                 return Results.Ok(new
+            //                 {
+            //                     saldo = new
+            //                     {
+            //                         total = client.saldo,
+            //                         data_extrato = DateTime.UtcNow,
+            //                         limite = client.limite
+            //                     },
+            //                     ultimas_transacoes = ultimas_transacoes
+            //                 });
+            //             };
+            //             while (await extratoReader.ReadAsync())
+            //             {
+            //                 ultimas_transacoes.Add(new
+            //                 {
+            //                     valor = extratoReader.GetInt32(0),
+            //                     tipo = extratoReader.GetChar(1),
+            //                     descricao = extratoReader.GetString(2),
+            //                     realizada_em = extratoReader.GetDateTime(3)
+            //                 });
+            //             }
+            //         }
+            //     }
+            // }
+
+
+            // var extrato = new
+            // {
+            //     saldo = new
+            //     {
+            //         total = client.saldo,
+            //         data_extrato = DateTime.UtcNow,
+            //         client.limite
+            //     },
+            //     ultimas_transacoes
+            // };
+            // return Results.Ok(extrato);
         });
 
         app.Run();

@@ -43,9 +43,9 @@ CREATE TABLE transacao(
 
 CREATE INDEX idx_cliente_id ON cliente(id);
 
-CREATE INDEX idx_transacao_cliente_id ON transacao(id_cliente);
-
 CREATE INDEX idx_transacao_cliente_tempo ON transacao(id_cliente, realizada_em DESC);
+
+CREATE INDEX idx_transacao_cliente_id ON transacao(id_cliente);
 
 INSERT INTO cliente(id, limite, saldo)
     VALUES (1, 1000 * 100, 0),
@@ -129,35 +129,71 @@ $$;
 
 -- Still haven't tested using this one
 CREATE OR REPLACE FUNCTION get_client_data(_customer_id int)
-    RETURNS TABLE(
-        saldo int,
-        limite int,
-        data_extrato timestamptz,
-        ultimas_transacoes json
-    )
-    AS $$
+RETURNS TABLE(
+    customer_balance int,
+    customer_limit int,
+    report_date timestamptz,
+    last_transactions jsonb
+)
+LANGUAGE plpgsql
+AS $$
 BEGIN
     RETURN QUERY
     SELECT
-        saldo,
+        saldo, -- total
         limite,
-        CURRENT_TIMESTAMP AS data_extrato,
-        json_agg(to_jsonb(trans) - 'id_cliente' - 'realizada_em') AS ultimas_transacoes
-    FROM
-        cliente
-        JOIN(
-            SELECT
-                *
-            FROM
-                transacao
-            WHERE
-                id_cliente = _customer_id
-            ORDER BY
-                realizada_em DESC
-            LIMIT 10) trans ON cliente.id = trans.id_cliente
-    WHERE
-        cliente.id = _customer_id;
+        CURRENT_TIMESTAMP, -- data_extrato
+        COALESCE(
+            json_agg(
+                json_build_object('valor', trans.valor,'tipo', trans.tipo,'descricao', trans.descricao,'realizada_em', trans.realizada_em))
+                FILTER (WHERE trans.valor IS NOT NULL
+            ),
+            '[]'
+        )::jsonb -- ultimas_transacoes
+        FROM cliente
+        LEFT OUTER JOIN (
+            SELECT *
+            FROM transacao
+            WHERE id_cliente = _customer_id
+            ORDER BY realizada_em DESC
+            LIMIT 10
+        ) trans
+        ON cliente.id = trans.id_cliente
+        WHERE cliente.id = _customer_id
+        GROUP BY saldo, limite;
+    -- {
+    --     saldo = {
+    --         total = client.saldo,
+    --         data_extrato = DateTime.UtcNow,
+    --         limite = client.limite
+    --     },
+    --     ultimas_transacoes = [
+    --         {
+    --             valor = extratoReader.GetInt32(0),
+    --             tipo = extratoReader.GetChar(1),
+    --             descricao = extratoReader.GetString(2),
+    --             realizada_em = extratoReader.GetDateTime(3)
+    --         },
+    --      ]
+    -- };
 END;
 $$
-LANGUAGE plpgsql;
 
+-- SELECT saldo as total, limite, CURRENT_TIMESTAMP as data_extrato, json_agg(to_jsonb(trans) - 'id_cliente') as ultimas_transacoes FROM cliente LEFT OUTER JOIN ( SELECT valor, tipo, descricao, realizada_em, id_cliente FROM transacao WHERE id_cliente = 1 ORDER BY realizada_em DESC LIMIT 10 ) trans ON cliente.id = trans.id_cliente WHERE cliente.id = 1 GROUP BY saldo, limite;
+-- OUTPUTS:
+--  total | limite |         data_extrato          | ultimas_transacoes
+-- -------+--------+-------------------------------+--------------------
+--      0 | 100000 | 2024-02-25 14:05:55.663607+00 | [null]
+
+-- SELECT saldo as total, limite, CURRENT_TIMESTAMP as data_extrato, COALESCE(json_agg(json_build_object('valor', trans.valor,'tipo', trans.tipo,'descricao', trans.descricao,'realizada_em', trans.realizada_em)) FILTER (WHERE trans.valor IS NOT NULL), '[]') as ultimas_transacoes FROM cliente LEFT OUTER JOIN ( SELECT * FROM transacao WHERE id_cliente = 1 ORDER BY realizada_em DESC LIMIT 10 ) trans ON cliente.id = trans.id_cliente WHERE cliente.id = 1 GROUP BY saldo, limite;
+
+-- OUTPUTS:
+--  total | limite |         data_extrato          |                              ultimas_transacoes
+-- -------+--------+-------------------------------+------------------------------------------------------------------------------
+--      0 | 100000 | 2024-02-25 14:05:34.139764+00 | [{"valor" : null, "tipo" : null, "descricao" : null, "realizada_em" : null}]
+
+-- UPDATE cliente SET saldo = saldo + 100 WHERE id = 1; INSERT INTO transacao(id_cliente, valor, tipo, descricao) VALUES (1, 100, 'c', 'test');
+-- UPDATE cliente SET saldo = 0 WHERE id = 1; DELETE FROM transacao WHERE id_cliente = 1;
+
+-- SELECT * FROM cliente WHERE id = @id LIMIT 1;
+-- SELECT valor, tipo, descricao, realizada_em FROM transacao WHERE id_cliente = @id ORDER BY realizada_em DESC LIMIT 10;
