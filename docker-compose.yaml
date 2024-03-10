@@ -4,25 +4,27 @@ services:
     db:
         image: postgres:16.2-bullseye
         hostname: db
+        volumes:
+            - ./DbSchema/create_db.sql:/docker-entrypoint-initdb.d/create_db.sql
         # removing these got me 300 KOs again, leaving it got me 1 KO. I could make tables UNLOGGED to avoid writing to WAL too, but didn't need to
         command: "postgres -c checkpoint_timeout=600 -c max_wal_size=4096 -c synchronous_commit=0 -c fsync=0 -c full_page_writes=0"
         ports:
             - "5432:5432"
-        volumes:
-            - ./DbSchema/create_db.sql:/docker-entrypoint-initdb.d/create_db.sql
+        environment:
+            - POSTGRES_PASSWORD=mystrongpassword
+            - POSTGRES_USER=admin
+            - POSTGRES_DB=rinha
         deploy:
             resources:
                 limits:
                     cpus: "1.05" # got up to 50ish %
                     memory: "300MB" # got up to 100ish MB
-        environment:
-            - POSTGRES_PASSWORD=mystrongpassword
-            - POSTGRES_USER=admin
-            - POSTGRES_DB=rinha
 
     api01: &api
         image: marcelocferraz/rinha2024q1-marcelo-lucas-dotnet:latest
         hostname: api01
+        depends_on:
+            - db
         ports:
             - "8081:8081"
         environment:
@@ -32,8 +34,6 @@ services:
             - DB_NAME=rinha
             - DB_USER=admin
             - DB_PASS=mystrongpassword
-        depends_on:
-            - db
         deploy:
             resources:
                 limits:
