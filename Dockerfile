@@ -4,12 +4,9 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 # Set the working directory inside the container
 WORKDIR /app
 
-# Copy the .NET project file and restore dependencies
-COPY *.csproj ./
-RUN dotnet restore
-
 # Copy the entire project and build the app
-COPY . ./
+COPY ./Src ./
+RUN dotnet restore
 RUN dotnet publish -c Release -o /app/out
 
 # Build the runtime image

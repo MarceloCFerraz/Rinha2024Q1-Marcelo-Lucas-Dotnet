@@ -18,10 +18,12 @@ services:
             resources:
                 limits:
                     cpus: "1.05" # got up to 50ish %
-                    memory: "300MB" # got up to 100ish MB
+                    memory: "200MB" # got up to 100ish MB
 
     api01: &api
-        image: marcelocferraz/rinha2024q1-marcelo-lucas-dotnet:latest
+        # build: # this shit is not creating a brand new build. Gotta look in the docs what i'm doing wrong
+        #     dockerfile: Dockerfile
+        image: rinha2024q1-marcelo-lucas-dotnet:latest # using local image. make sure you've built your local copy with `docker build`
         hostname: api01
         depends_on:
             - db
@@ -38,7 +40,7 @@ services:
             resources:
                 limits:
                     cpus: "0.15" # got up to 20%
-                    memory: "100MB" # got up to 50ish MB
+                    memory: "150MB" # got up to 50ish MB
 
     api02:
         <<: *api
@@ -57,7 +59,7 @@ services:
         depends_on:
             - api01
             - api02
-        ports:
+        ports: # defined in `NginxConf/nginx.conf`
             - "9999:9999"
         deploy:
             resources:

@@ -9,7 +9,7 @@ public class ExtratoDetails
     {
         this.total = total;
         this.limite = limite;
-        this.data_extrato = data_extrato;
+        this.data_extrato = data_extrato; // no need to convert to UTC because the database only stores and returns utc dates
     }
     public ExtratoDetails()
     {
