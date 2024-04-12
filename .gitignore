@@ -3,3 +3,6 @@ bin
 out
 load-test/user-files/results
 .metals
+.vscode
+
+.fake
